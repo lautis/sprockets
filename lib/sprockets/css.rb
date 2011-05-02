@@ -1,7 +1,7 @@
 require 'tilt'
 
 module Sprockets
-  class SassImporter < Sass::Importers::Base
+  class SassImporter
     GLOB = /\*|\[.+\]/
     PARTIAL = /^_/
     HAS_EXTENSION = /\.css(.s[ac]ss)?$/
@@ -126,9 +126,13 @@ module Sprockets
   class SassTemplate < Tilt::SassTemplate
     self.default_mime_type = 'text/css'
 
-    def initialize(*args)
-      super
-      @context = Context
+    def self.engine_initialized?
+      defined?(::Sass::Engine) && defined?(::Sass::Plugin)
+    end
+
+    def initialize_engine
+      require_template_library 'sass'
+      require_template_library 'sass/plugin'
     end
 
     def syntax
@@ -136,6 +140,7 @@ module Sprockets
     end
 
     def prepare
+      @context = Context
     end
 
     def evaluate(scope, locals, &block)
