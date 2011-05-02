@@ -114,11 +114,9 @@ module Sprockets
       def each_pathname_in_tree(relative_path = ".", glob = "**/*")
         Dir["#{context.pathname.dirname.join(relative_path)}/#{glob}"].sort.each do |filename|
           pathname = Pathname.new(filename)
-
           if pathname.directory?
             yield pathname
-          elsif pathname.file? &&
-              context.content_type_for(pathname) == context.content_type_for(context.pathname)
+          elsif context.sprockets_requirable?(pathname)
             yield pathname
           end
         end
