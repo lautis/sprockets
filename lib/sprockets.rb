@@ -5,9 +5,6 @@ module Sprockets
   autoload :Concatenation,       "sprockets/concatenation"
   autoload :ContentTypeMismatch, "sprockets/errors"
   autoload :Context,             "sprockets/context"
-  autoload :SassImporter,        "sprockets/sass_importer"
-  autoload :SassTemplate,        "sprockets/css"
-  autoload :ScssTemplate,        "sprockets/css"
   autoload :DirectiveProcessor,  "sprockets/directive_processor"
   autoload :EnginePathname,      "sprockets/engine_pathname"
   autoload :Engines,             "sprockets/engines"
@@ -15,5 +12,7 @@ module Sprockets
   autoload :EnvironmentIndex,    "sprockets/environment_index"
   autoload :Error,               "sprockets/errors"
   autoload :FileNotFound,        "sprockets/errors"
+  autoload :SassTemplate,        "sprockets/css"
+  autoload :ScssTemplate,        "sprockets/css"
   autoload :StaticAsset,         "sprockets/static_asset"
 end
