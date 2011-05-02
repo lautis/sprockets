@@ -2,7 +2,6 @@ require 'tilt'
 
 module Sprockets
   class SassImporter
-    GLOB = /\*|\[.+\]/
     PARTIAL = /^_/
     HAS_EXTENSION = /\.css(.s[ac]ss)?$/
 
@@ -27,36 +26,18 @@ module Sprockets
       nil
     end
 
-    def glob_imports(glob, base_pathname, options)
-      contents = ""
-      tree = base_pathname.dirname.relative_path_from(context.pathname.dirname)
-      each_pathname_in_tree(tree, glob) do |p|
-        if p.file? && p != base_pathname
-          contents << "@import #{p.relative_path_from(base_pathname.dirname).to_s.inspect};\n"
-        end
-      end
-      Sass::Engine.new(contents, options.merge(
-        :filename => base_pathname,
-        :importer => self,
-        :syntax => :scss
-      ))
-    end
-
     def resolve(name, base_pathname = nil)
       name = Pathname.new(name)
       if base_pathname && base_pathname.to_s.size > 0
         name = base_pathname.dirname.relative_path_from(context.pathname.dirname).join(name)
       end
       partial_name = name.dirname.join("_#{name.basename}")
-
       sprockets_resolve(name) || sprockets_resolve(partial_name)
     end
 
     def find_relative(name, base, options)
       base_pathname = Pathname.new(base)
-      if name =~ GLOB
-        glob_imports(name, base_pathname, options)
-      elsif pathname = resolve(name, base_pathname)
+      if pathname = resolve(name, base_pathname)
         if sass_file?(pathname)
           Sass::Engine.new(pathname.read, options.merge(:filename => pathname.to_s, :importer => self, :syntax => syntax(pathname)))
         else
@@ -80,24 +61,13 @@ module Sprockets
     end
 
     def mtime(name, options)
-      if name =~ GLOB
-        mtime = nil
-        each_pathname_in_tree(".", name) do |p|
-          mtime ||= p.mtime
-          mtime = [mtime, p.mtime].max
-        end
-        mtime
-      elsif pathname = resolve(name)
+      if pathname = resolve(name)
         pathname.mtime
       end
     end
 
     def key(name, options)
-      if name.to_s =~ GLOB
-        ["Sprockets:#{context.base_path}", name]
-      else
-        ["Sprockets:" + File.dirname(File.expand_path(name)), File.basename(name)]
-      end
+      ["Sprockets:" + File.dirname(File.expand_path(name)), File.basename(name)]
     end
 
     def to_s
@@ -109,17 +79,6 @@ module Sprockets
         context.sprockets_resolve(path)
       rescue Sprockets::FileNotFound
         nil
-      end
-
-      def each_pathname_in_tree(relative_path = ".", glob = "**/*")
-        Dir["#{context.pathname.dirname.join(relative_path)}/#{glob}"].sort.each do |filename|
-          pathname = Pathname.new(filename)
-          if pathname.directory?
-            yield pathname
-          elsif context.sprockets_requirable?(pathname)
-            yield pathname
-          end
-        end
       end
   end
 

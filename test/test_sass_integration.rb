@@ -27,12 +27,6 @@ class TestSassIntegration < Sprockets::TestCase
 .not-a-partial {
   border: 1px solid blue; }
 
-.globbed-sass {
-  color: blue; }
-
-.globbed-scss {
-  color: blue; }
-
 .main {
   color: yellow;
   background-color: red; }
