@@ -30,7 +30,7 @@ module Sprockets
     def glob_imports(glob, base_pathname, options)
       contents = ""
       tree = base_pathname.dirname.relative_path_from(context.pathname.dirname)
-      context.each_pathname_in_tree(tree, glob) do |p|
+      each_pathname_in_tree(tree, glob) do |p|
         if p.file? && p != base_pathname
           contents << "@import #{p.relative_path_from(base_pathname.dirname).to_s.inspect};\n"
         end
@@ -90,7 +90,7 @@ module Sprockets
     def mtime(name, options)
       if name =~ GLOB
         mtime = nil
-        context.each_pathname_in_tree(".", name) do |p|
+        each_pathname_in_tree(".", name) do |p|
           mtime ||= p.mtime
           mtime = [mtime, p.mtime].max
         end
@@ -109,7 +109,7 @@ module Sprockets
     end
 
     def to_s
-      "Sprockets::SassImporter(#{context.base_path})"
+      "Sprockets::SassImporter(#{context.pathname})"
     end
 
     private
@@ -117,6 +117,19 @@ module Sprockets
         context.sprockets_resolve(path)
       rescue Sprockets::FileNotFound
         nil
+      end
+
+      def each_pathname_in_tree(relative_path = ".", glob = "**/*")
+        Dir["#{context.pathname.dirname.join(relative_path)}/#{glob}"].sort.each do |filename|
+          pathname = Pathname.new(filename)
+
+          if pathname.directory?
+            yield pathname
+          elsif pathname.file? &&
+              context.content_type_for(pathname) == context.content_type_for(context.pathname)
+            yield pathname
+          end
+        end
       end
   end
 

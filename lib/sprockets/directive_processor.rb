@@ -274,7 +274,7 @@ module Sprockets
 
           context.sprockets_depend(root)
 
-          context.each_pathname_in_tree(path) do |pathname|
+          each_pathname_in_tree(path) do |pathname|
             if pathname.file?
               context.sprockets_require(pathname)
             else
@@ -356,7 +356,7 @@ module Sprockets
       end
 
       def base_path
-        context.base_path
+        self.pathname.dirname
       end
   end
 end
