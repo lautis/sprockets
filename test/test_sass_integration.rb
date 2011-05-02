@@ -1,16 +1,14 @@
-require 'sass'
 require 'sprockets_test'
-require 'tilt'
-require 'yaml'
 
 class TestSassIntegration < Sprockets::TestCase
   def setup
     @env = Sprockets::Environment.new
     @env.paths << fixture_path('sass')
+    @env.engines.register :scss, Sprockets::ScssTemplate
   end
 
-  test "Sass imports work" do
-    assert_equal(<<CSS, render("application.css.scss"))
+  test "sass imports" do
+    assert_equal <<CSS, @env["application.css.scss"].to_s
 .partial-sass {
   color: green; }
 
@@ -40,23 +38,4 @@ class TestSassIntegration < Sprockets::TestCase
   background-color: red; }
 CSS
   end
-
-  def scss_template(logical_path)
-    Sprockets::ScssTemplate.new(resolve(logical_path).to_s)
-  end
-
-  def resolve(logical_path)
-    @env.resolve(logical_path)
-  end
-
-  def read(logical_path)
-    File.read(resolve(logical_path))
-  end
-
-  def render(logical_path)
-    pathname = resolve(logical_path)
-    scope = Sprockets::Context.new(@env, Sprockets::Concatenation.new(@env, pathname), pathname)
-    scss_template(logical_path).render(scope)
-  end
-  
 end
