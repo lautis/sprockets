@@ -42,16 +42,8 @@ module Sprockets
       ))
     end
 
-    def extensionify(name)
-      if name.to_s =~ HAS_EXTENSION
-        name.to_s
-      else
-        "#{name}.css"
-      end
-    end
-
     def resolve(name, base_pathname = nil)
-      name = Pathname.new(extensionify(name))
+      name = Pathname.new(name)
       if base_pathname && base_pathname.to_s.size > 0
         name = base_pathname.dirname.relative_path_from(context.pathname.dirname).join(name)
       end
