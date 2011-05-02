@@ -55,9 +55,9 @@ module Sprockets
       if base_pathname && base_pathname.to_s.size > 0
         name = base_pathname.dirname.relative_path_from(context.pathname.dirname).join(name)
       end
-      context.sprockets_resolve(name) {|p| return p }
-      context.sprockets_resolve(name.dirname.join("_#{name.basename}")) {|p| return p }
-      nil
+      partial_name = name.dirname.join("_#{name.basename}")
+
+      sprockets_resolve(name) || sprockets_resolve(partial_name)
     end
 
     def find_relative(name, base, options)
@@ -111,6 +111,13 @@ module Sprockets
     def to_s
       "Sprockets::SassImporter(#{context.base_path})"
     end
+
+    private
+      def sprockets_resolve(path)
+        context.sprockets_resolve(path)
+      rescue Sprockets::FileNotFound
+        nil
+      end
   end
 
   class SassTemplate < Tilt::SassTemplate
