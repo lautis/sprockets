@@ -1,5 +1,5 @@
+require 'sprockets/asset_pathname'
 require 'sprockets/errors'
-require 'sprockets/engine_pathname'
 require 'digest/md5'
 require 'pathname'
 require 'rack/utils'
@@ -8,17 +8,14 @@ require 'time'
 
 module Sprockets
   class Concatenation
-    attr_reader :environment, :pathname
-    attr_reader :content_type, :format_extension
+    attr_reader :environment, :pathname, :content_type
     attr_reader :paths
     attr_accessor :mtime
 
     def initialize(environment, pathname)
-      @environment = environment
-      @pathname    = Pathname.new(pathname)
-
-      @content_type     = nil
-      @format_extension = nil
+      @environment  = environment
+      @pathname     = Pathname.new(pathname)
+      @content_type = nil
 
       @paths  = Set.new
       @source = ""
@@ -43,11 +40,17 @@ module Sprockets
     end
 
     def post_process!
-      @source = evaluate(environment.engines.concatenation_processors, pathname, @source)
+      engines = environment.filters(content_type)
+      @source = evaluate(pathname, :data => @source, :engines => engines)
       nil
     end
 
-    def depend(pathname)
+    def evaluate(pathname, *args)
+      context = environment.context_class.new(self, pathname)
+      context.evaluate(pathname, *args)
+    end
+
+    def depend_on(pathname)
       pathname = Pathname.new(pathname)
 
       if pathname.mtime > mtime
@@ -59,50 +62,30 @@ module Sprockets
       pathname
     end
 
-    def requirable?(pathname)
-      content_type.nil? || content_type == EnginePathname.new(pathname, environment.engines).content_type
+    def can_require?(pathname)
+      pathname = Pathname.new(pathname)
+      content_type = AssetPathname.new(pathname, environment).content_type
+      pathname.file? && (self.content_type.nil? || self.content_type == content_type)
     end
 
     def require(pathname)
-      pathname        = Pathname.new(pathname)
-      engine_pathname = EnginePathname.new(pathname, environment.engines)
+      pathname       = Pathname.new(pathname)
+      asset_pathname = AssetPathname.new(pathname, environment)
 
-      @content_type     ||= engine_pathname.content_type
-      @format_extension ||= engine_pathname.format_extension
+      @content_type ||= asset_pathname.content_type
 
-      if requirable?(pathname)
+      if can_require?(pathname)
         unless paths.include?(pathname.to_s)
-          depend pathname
-          self << process(pathname)
+          depend_on(pathname)
+          self << evaluate(pathname)
         end
       else
         raise ContentTypeMismatch, "#{pathname} is " +
-          "'#{ EnginePathname.new(pathname, environment.engines).format_extension}', " +
-          "not '#{format_extension}'"
+          "'#{AssetPathname.new(pathname, environment).content_type}', " +
+          "not '#{content_type}'"
       end
 
       pathname
     end
-
-    def process(pathname)
-      pathname        = Pathname.new(pathname)
-      engine_pathname = EnginePathname.new(pathname, environment.engines)
-      engines         = environment.engines.pre_processors +
-                          engine_pathname.engines.reverse +
-                          environment.engines.post_processors
-
-      evaluate(engines, pathname, pathname.read)
-    end
-
-    private
-      def evaluate(engines, pathname, data)
-        scope    = environment.context.new(environment, self, pathname)
-        locals   = {}
-
-        engines.inject(data) do |result, engine|
-          template = engine.new(pathname.to_s) { result }
-          template.render(scope, locals)
-        end
-      end
   end
 end

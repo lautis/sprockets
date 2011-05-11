@@ -1,51 +1,44 @@
-require 'sprockets/engine_pathname'
+require 'sprockets/asset_pathname'
+require 'sprockets/context'
+require 'sprockets/directive_processor'
 require 'sprockets/environment_index'
-require 'sprockets/server'
-require 'sprockets/utils'
-require 'fileutils'
 require 'hike'
 require 'logger'
 require 'pathname'
+require 'tilt'
 
 module Sprockets
   class Environment
-    include Server
+    include Server, Processing, StaticCompilation
 
-    attr_accessor :logger, :context
+    attr_accessor :logger, :context_class
 
     def initialize(root = ".")
       @trail = Hike::Trail.new(root)
-      @trail.extensions.replace Engines::CONCATENATABLE_EXTENSIONS
-
-      @engines = Engines.new(@trail)
 
       @logger = Logger.new($stderr)
       @logger.level = Logger::FATAL
 
-      @context = Class.new(Context)
+      @context_class = Class.new(Context)
 
       @static_root = nil
 
-      expire_cache
-    end
+      @mime_types = {}
+      @engines = {}
+      @formats = Hash.new { |h, k| h[k] = [] }
+      @filters = Hash.new { |h, k| h[k] = [] }
 
-    attr_reader :static_root
+      register_format '.css', DirectiveProcessor
+      register_format '.js', DirectiveProcessor
 
-    def static_root=(root)
-      expire_cache
-      @static_root = root
-    end
+      register_engine '.str',    Tilt::StringTemplate
+      register_engine '.erb',    Tilt::ERBTemplate
+      register_engine '.sass',   Tilt::SassTemplate
+      register_engine '.scss',   Tilt::ScssTemplate
+      register_engine '.less',   Tilt::LessTemplate
+      register_engine '.coffee', Tilt::CoffeeScriptTemplate
 
-    attr_reader :css_compressor, :js_compressor
-
-    def css_compressor=(compressor)
-      expire_cache
-      @css_compressor = compressor
-    end
-
-    def js_compressor=(compressor)
-      expire_cache
-      @js_compressor = compressor
+      expire_index!
     end
 
     def root
@@ -66,13 +59,11 @@ module Sprockets
     end
 
     def paths
-      ArrayProxy.new(@trail.paths) { expire_cache }
+      ArrayProxy.new(@trail.paths) { expire_index! }
     end
 
-    attr_reader :engines
-
     def extensions
-      ArrayProxy.new(@trail.extensions) { expire_cache }
+      @trail.extensions.dup
     end
 
     def precompile(*paths)
@@ -99,13 +90,13 @@ module Sprockets
     alias_method :[], :find_asset
 
     protected
-      def expire_cache
+      def expire_index!
         @cache = {}
       end
 
       def find_fresh_asset_from_cache(logical_path)
         if asset = @cache[logical_path.to_s]
-          if Utils.path_fingerprint(logical_path)
+          if path_fingerprint(logical_path)
             asset
           elsif asset.stale?
             logger.warn "[Sprockets] #{logical_path} #{asset.digest} stale"

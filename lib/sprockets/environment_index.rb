@@ -1,33 +1,29 @@
+require 'sprockets/asset_pathname'
 require 'sprockets/concatenated_asset'
-require 'sprockets/engine_pathname'
 require 'sprockets/errors'
-require 'sprockets/server'
 require 'sprockets/static_asset'
-require 'sprockets/utils'
 require 'pathname'
-require 'set'
 
 module Sprockets
   class EnvironmentIndex
-    include Server
+    include Server, Processing, StaticCompilation
 
-    attr_reader :logger, :context, :engines, :css_compressor, :js_compressor
-
-    attr_reader :static_root
+    attr_reader :logger, :context_class
 
     def initialize(environment, trail, static_root)
       @logger         = environment.logger
-      @context        = environment.context
-      @engines        = environment.engines.dup
-      @css_compressor = environment.css_compressor
-      @js_compressor  = environment.js_compressor
+      @context_class  = environment.context_class
 
-      @trail = trail.index
-      @static_assets = {}
-      @path_assets   = {}
+      @trail   = trail.index
+      @assets  = {}
       @entries = {}
 
       @static_root = static_root ? Pathname.new(static_root) : nil
+
+      @mime_types = environment.mime_types
+      @engines    = environment.engines
+      @filters    = environment.filters
+      @formats    = environment.formats
     end
 
     def root
@@ -46,31 +42,6 @@ module Sprockets
       self
     end
 
-    def precompile(*paths)
-      raise "missing static root" unless @static_root
-
-      paths.each do |path|
-        files.each do |logical_path|
-          if path.is_a?(Regexp)
-            next unless path.match(logical_path.to_s)
-          else
-            next unless logical_path.fnmatch(path.to_s)
-          end
-
-          if asset = find_asset_in_path(logical_path)
-            digest_path = Utils.path_with_fingerprint(logical_path, asset.digest)
-            filename = @static_root.join(digest_path)
-
-            FileUtils.mkdir_p filename.dirname
-
-            filename.open('w') do |f|
-              f.write asset.to_s
-            end
-          end
-        end
-      end
-    end
-
     def resolve(logical_path, options = {})
       if block_given?
         @trail.find(logical_path.to_s, logical_index_path(logical_path), options) do |path|
@@ -85,73 +56,25 @@ module Sprockets
     end
 
     def find_asset(logical_path)
-      logical_path = Pathname.new(logical_path)
-      find_asset_in_static(logical_path) || find_asset_in_path(logical_path)
+      logical_path     = logical_path.to_s.sub(/^\//, '')
+      logical_pathname = Pathname.new(logical_path)
+
+      if @assets.key?(logical_path)
+        @assets[logical_path]
+      else
+        @assets[logical_path] = find_asset_in_static_root(logical_pathname) ||
+          find_asset_in_path(logical_pathname)
+      end
     end
     alias_method :[], :find_asset
 
     protected
-      def files
-        files = Set.new
-        paths.each do |base_path|
-          base_pathname = Pathname.new(base_path)
-          Dir["#{base_pathname}/**/*"].each do |filename|
-            logical_path = Pathname.new(filename).relative_path_from(base_pathname)
-            files << path_without_engine_extensions(logical_path)
-          end
-        end
-        files
-      end
-
-      def find_asset_in_static(logical_path)
-        return unless static_root
-
-        logical_path = logical_path.to_s.sub(/^\//, '')
-
-        if @static_assets.key?(logical_path)
-          return @static_assets[logical_path]
-        end
-
-        pathname = Pathname.new(static_root.join(logical_path))
-        engine_pathname = EnginePathname.new(pathname, engines)
-
-        entries = entries(pathname.dirname)
-
-        if entries.empty?
-          @static_assets[logical_path] = nil
-          return nil
-        end
-
-        if !Utils.path_fingerprint(pathname)
-          pattern = /^#{Regexp.escape(engine_pathname.basename_without_extensions.to_s)}
-                     -[0-9a-f]{7,40}
-                     #{Regexp.escape(engine_pathname.extensions.join)}$/x
-
-          entries.each do |filename|
-            if filename.to_s =~ pattern
-              asset = StaticAsset.new(self, pathname.dirname.join(filename))
-              @static_assets[logical_path] = asset
-              return asset
-            end
-          end
-        end
-
-        if entries.include?(pathname.basename) && pathname.file?
-          asset = StaticAsset.new(self, pathname)
-          @static_assets[logical_path] = asset
-          return asset
-        end
-
-        @static_assets[logical_path] = nil
-        nil
+      def expire_index!
+        raise TypeError, "can't modify immutable index"
       end
 
       def find_asset_in_path(logical_path)
-        if @path_assets.key?(logical_path.to_s)
-          return @path_assets[logical_path.to_s]
-        end
-
-        if fingerprint = Utils.path_fingerprint(logical_path)
+        if fingerprint = path_fingerprint(logical_path)
           pathname = resolve(logical_path.to_s.sub("-#{fingerprint}", ''))
         else
           pathname = resolve(logical_path)
@@ -159,7 +82,11 @@ module Sprockets
       rescue FileNotFound
         nil
       else
-        if engines.concatenatable?(pathname)
+        asset_pathname = AssetPathname.new(pathname, self)
+        extension      = asset_pathname.format_extension ||
+                         asset_pathname.engine_format_extension
+
+        if formats(extension).any?
           logger.info "[Sprockets] #{logical_path} building"
           asset = ConcatenatedAsset.new(self, pathname)
         else
@@ -171,34 +98,20 @@ module Sprockets
           asset = nil
         end
 
-        @path_assets[logical_path.to_s] = asset
         asset
       end
 
     private
       def logical_index_path(logical_path)
         pathname = Pathname.new(logical_path)
-        engine_pathname = EnginePathname.new(logical_path, engines)
+        asset_pathname = AssetPathname.new(logical_path, self)
 
-        if engine_pathname.basename_without_extensions.to_s == 'index'
+        if asset_pathname.basename_without_extensions.to_s == 'index'
           logical_path
         else
-          basename = "#{engine_pathname.basename_without_extensions}/index#{engine_pathname.extensions.join}"
+          basename = "#{asset_pathname.basename_without_extensions}/index#{asset_pathname.extensions.join}"
           pathname.dirname.to_s == '.' ? basename : pathname.dirname.join(basename).to_s
         end
-      end
-
-      def path_without_engine_extensions(pathname)
-        engine_pathname = EnginePathname.new(pathname, engines)
-        engine_pathname.engine_extensions.inject(pathname) do |p, ext|
-          p.sub(ext, '')
-        end
-      end
-
-      def entries(pathname)
-        @entries[pathname.to_s] ||= pathname.entries.reject { |entry| entry.to_s =~ /^\.\.?$/ }
-      rescue Errno::ENOENT
-        @entries[pathname.to_s] = []
       end
   end
 end

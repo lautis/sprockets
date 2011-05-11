@@ -25,16 +25,16 @@ module Sprockets
   # the processor to do whatever you'd like. You could add your own
   # custom directives or invent your own directive syntax.
   #
-  # `Environment#engines.pre_processors` includes `DirectiveProcessor` by
-  # default.
+  # `Environment#formats` includes `DirectiveProcessor` by default.
   #
   # To remove the processor entirely:
   #
-  #     env.engines.pre_processors.delete(Sprockets::DirectiveProcessor)
+  #     env.unregister_format('.css', Sprockets::DirectiveProcessor)
+  #     env.unregister_format('.js', Sprockets::DirectiveProcessor)
   #
   # Then inject your own preprocessor:
   #
-  #     env.engines.pre_precessors.push(MyProcessor)
+  #     env.register_format('.css', MyProcessor)
   #
   class DirectiveProcessor < Tilt::Template
     attr_reader :pathname
@@ -42,21 +42,39 @@ module Sprockets
     def prepare
       @pathname = Pathname.new(file)
 
+      @directive_parser   = Parser.new(data)
       @included_pathnames = []
+      @has_written_body   = false
       @compat             = false
     end
 
     # Implemented for Tilt#render.
     #
-    # `context` is a `Context` instance with special `sprockets_`
-    # prefixed methods that allow you to access the environment and
-    # append to the concatenation. See `Context` for the complete API.
+    # `context` is a `Context` instance with methods that allow you to
+    # access the environment and append to the concatenation. See
+    # `Context` for the complete API.
     def evaluate(context, locals, &block)
-      @context     = context
-      @environment = context.sprockets_environment
+      @context       = context
+      @concatenation = context.concatenation
 
       process_directives
       process_source
+    end
+
+    def processed_header
+      @directive_parser.processed_header
+    end
+
+    def processed_body
+      @directive_parser.body
+    end
+
+    def processed_source
+      @directive_parser.processed_source
+    end
+
+    def directives
+      @directive_parser.directives
     end
 
     protected
@@ -142,7 +160,7 @@ module Sprockets
       end
 
       attr_reader :included_pathnames
-      attr_reader :context
+      attr_reader :context, :concatenation
 
       # Gathers comment directives in the source and processes them.
       # Any directive method matching `process_*_directive` will
@@ -156,20 +174,18 @@ module Sprockets
       #     class DirectiveProcessor < Sprockets::DirectiveProcessor
       #       def process_require_glob_directive
       #         Dir["#{base_path}/#{glob}"].sort.each do |filename|
-      #           context.sprockets_require(filename)
+      #           require(filename)
       #         end
       #       end
       #     end
       #
       # Replace the current processor on the environment with your own:
       #
-      #     env.engines.pre_processors.delete(Sprockets::DirectiveProcessor)
-      #     env.engines.pre_processors.push(DirectiveProcessor)
+      #     env.unregister_format('.css', Sprockets::DirectiveProcessor)
+      #     env.register_format('.css', DirectiveProcessor)
       #
       def process_directives
-        @directive_parser = Parser.new(data)
-
-        @directive_parser.directives.each do |name, *args|
+        directives.each do |name, *args|
           send("process_#{name}_directive", *args)
         end
       end
@@ -177,13 +193,17 @@ module Sprockets
       def process_source
         result = ""
 
-        unless @directive_parser.processed_header.empty?
-          result << @directive_parser.processed_header << "\n"
+        unless @has_written_body || processed_header.empty?
+          result << processed_header << "\n"
         end
 
-        included_pathnames.each { |p| result << context.sprockets_process(p) }
+        included_pathnames.each do |pathname|
+          result << context.evaluate(pathname)
+        end
 
-        result << @directive_parser.body
+        unless @has_written_body
+          result << processed_body
+        end
 
         if compat? && constants.any?
           result.gsub!(/<%=(.*?)%>/) { constants[$1.strip] }
@@ -219,7 +239,26 @@ module Sprockets
           end
         end
 
-        context.sprockets_require(path)
+        require(path)
+      end
+
+      # `require_self` causes the body of the current file to be
+      # inserted before any subsequent `require` or `include`
+      # directives. Useful in CSS files, where it's common for the
+      # index file to contain global styles that need to be defined
+      # before other dependencies are loaded.
+      #
+      #     /*= require "reset"
+      #      *= require_self
+      #      *= require_tree .
+      #      */
+      #
+      def process_require_self_directive
+        unless @has_written_body
+          concatenation << context.evaluate(pathname, :data => process_source)
+          included_pathnames.clear
+          @has_written_body = true
+        end
       end
 
       # The `include` directive works similar to `require` but
@@ -229,7 +268,7 @@ module Sprockets
       #     //= include "header"
       #
       def process_include_directive(path)
-        included_pathnames << context.sprockets_resolve(path)
+        included_pathnames << context.resolve(path)
       end
 
       # `require_directory` requires all the files inside a single
@@ -241,11 +280,11 @@ module Sprockets
       def process_require_directory_directive(path = ".")
         if relative?(path)
           root = base_path.join(path).expand_path
-          context.sprockets_depend(root)
+          context.depend_on(root)
 
           Dir["#{root}/*"].sort.each do |filename|
-            if context.sprockets_requirable?(filename)
-              context.sprockets_require(filename)
+            if concatenation.can_require?(filename)
+              require(filename)
             end
           end
         else
@@ -262,13 +301,13 @@ module Sprockets
       def process_require_tree_directive(path = ".")
         if relative?(path)
           root = base_path.join(path).expand_path
-          context.sprockets_depend(root)
+          context.depend_on(root)
 
           Dir["#{root}/**/*"].sort.each do |filename|
             if File.directory?(filename)
-              context.sprockets_depend(filename)
-            elsif context.sprockets_requirable?(filename)
-              context.sprockets_require(filename)
+              context.depend_on(filename)
+            elsif concatenation.can_require?(filename)
+              require(filename)
             end
           end
         else
@@ -287,10 +326,10 @@ module Sprockets
       # This is useful if you are using ERB and File.read to pull
       # in contents from another file.
       #
-      #     //= depend "foo.png"
+      #     //= depend_on "foo.png"
       #
-      def process_depend_directive(path)
-        context.sprockets_depend(context.sprockets_resolve(path))
+      def process_depend_on_directive(path)
+        context.depend_on(context.resolve(path))
       end
 
       # Enable Sprockets 1.x compat mode.
@@ -328,6 +367,10 @@ module Sprockets
       end
 
     private
+      def require(path)
+        concatenation.require(context.resolve(path, :content_type => :self))
+      end
+
       def relative?(path)
         path =~ /^\.($|\.?\/)/
       end

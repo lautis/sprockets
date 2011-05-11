@@ -76,7 +76,7 @@ module Sprockets
 
     private
       def sprockets_resolve(path)
-        context.sprockets_resolve(path)
+        context.resolve(path)
       rescue Sprockets::FileNotFound
         nil
       end

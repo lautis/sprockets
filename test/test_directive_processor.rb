@@ -84,8 +84,7 @@ class DirectiveParserTest < Sprockets::TestCase
   end
 
   def directive_parser(fixture_name)
-    # TODO: Test DirectiveProcesser API instead of Parser directly
-    Sprockets::DirectiveProcessor::Parser.new(directive_fixture(fixture_name))
+    Sprockets::DirectiveProcessor.new(fixture_path("directives/#{fixture_name}"))
   end
 
   def directive_fixture(name)
@@ -103,17 +102,17 @@ class TestCustomDirectiveProcessor < Sprockets::TestCase
     @env.paths << fixture_path('context')
   end
 
-  class DirectiveProcessor < Sprockets::DirectiveProcessor
+  class TestDirectiveProcessor < Sprockets::DirectiveProcessor
     def process_require_glob_directive(glob)
       Dir["#{base_path}/#{glob}"].sort.each do |filename|
-        context.sprockets_require(filename)
+        context.concatenation.require(filename)
       end
     end
   end
 
   test "custom processor using Context#sprockets_resolve and Context#sprockets_depend" do
-    @env.engines.pre_processors.delete(Sprockets::DirectiveProcessor)
-    @env.engines.pre_processors.push(DirectiveProcessor)
+    @env.unregister_format('.js', Sprockets::DirectiveProcessor)
+    @env.register_format('.js', TestDirectiveProcessor)
 
     assert_equal "var Foo = {};\n\n", @env["require_glob.js"].to_s
   end

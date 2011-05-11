@@ -34,11 +34,33 @@ module EnvironmentTests
 
   test "engine extensions" do
     ["coffee", "erb", "less", "sass", "scss", "str"].each do |ext|
-      assert @env.engines.extensions.include?(".#{ext}")
+      assert @env.engine_extensions.include?(".#{ext}")
     end
     ["css", "js"].each do |ext|
-      assert !@env.engines.extensions.include?(".#{ext}")
+      assert !@env.engine_extensions.include?(".#{ext}")
     end
+  end
+
+  test "format extensions" do
+    ["css", "js"].each do |ext|
+      assert @env.format_extensions.include?(".#{ext}")
+    end
+    ["coffee", "erb", "less", "sass", "scss", "str"].each do |ext|
+      assert !@env.format_extensions.include?(".#{ext}")
+    end
+  end
+
+  test "lookup mime type" do
+    assert_equal "application/javascript", @env.mime_types(".js")
+    assert_equal "application/javascript", @env.mime_types("js")
+    assert_equal "text/css", @env.mime_types(:css)
+    assert_equal nil, @env.mime_types("foo")
+    assert_equal nil, @env.mime_types("foo")
+  end
+
+  test "lookup filters" do
+    assert_equal [], @env.filters('application/javascript')
+    assert_equal [], @env.filters('text/css')
   end
 
   test "resolve in environment" do
@@ -228,6 +250,18 @@ class TestEnvironment < Sprockets::TestCase
     @env = new_environment
   end
 
+  test "register mime type" do
+    assert !@env.mime_types("jst")
+    @env.register_mime_type("application/javascript", "jst")
+    assert_equal "application/javascript", @env.mime_types("jst")
+  end
+
+  test "register filter" do
+    assert !@env.filters('text/css').include?(WhitespaceCompressor)
+    @env.register_filter 'text/css', WhitespaceCompressor
+    assert @env.filters('text/css').include?(WhitespaceCompressor)
+  end
+
   test "changing static root expires old assets" do
     assert @env["compiled.js"]
     @env.static_root = nil
@@ -249,12 +283,6 @@ class TestEnvironment < Sprockets::TestCase
   test "changing paths expires old assets" do
     assert @env["gallery.css"]
     @env.paths.clear
-    assert_nil @env["gallery.css"]
-  end
-
-  test "changing extensions expires old assets" do
-    assert @env["gallery.css"]
-    @env.extensions.clear
     assert_nil @env["gallery.css"]
   end
 
@@ -306,22 +334,22 @@ class TestEnvironment < Sprockets::TestCase
     e1 = new_environment
     e2 = new_environment
 
-    assert_raises(NameError) { e1.context.instance_method(:foo) }
-    assert_raises(NameError) { e2.context.instance_method(:foo) }
+    assert_raises(NameError) { e1.context_class.instance_method(:foo) }
+    assert_raises(NameError) { e2.context_class.instance_method(:foo) }
 
-    e1.context.class_eval do
+    e1.context_class.class_eval do
       def foo; end
     end
 
-    assert_nothing_raised(NameError) { e1.context.instance_method(:foo) }
-    assert_raises(NameError) { e2.context.instance_method(:foo) }
+    assert_nothing_raised(NameError) { e1.context_class.instance_method(:foo) }
+    assert_raises(NameError) { e2.context_class.instance_method(:foo) }
   end
 
   test "registering engine adds to the environments extensions" do
     assert !@env.engines[".foo"]
     assert !@env.extensions.include?(".foo")
 
-    @env.engines.register ".foo", Tilt::StringTemplate
+    @env.register_engine ".foo", Tilt::StringTemplate
 
     assert @env.engines[".foo"]
     assert @env.extensions.include?(".foo")
@@ -334,20 +362,15 @@ class TestEnvironment < Sprockets::TestCase
     assert_nil e1.engines[".foo"]
     assert_nil e2.engines[".foo"]
 
-    e1.engines.register ".foo", Tilt::StringTemplate
+    e1.register_engine ".foo", Tilt::StringTemplate
 
     assert e1.engines[".foo"]
     assert_nil e2.engines[".foo"]
   end
 
   test "disabling default directive preprocessor" do
-    @env.engines.pre_processors.delete(Sprockets::DirectiveProcessor)
+    @env.unregister_format('.js', Sprockets::DirectiveProcessor)
     assert_equal "// =require \"notfound\"\n", @env["missing_require.js"].to_s
-  end
-
-  test "adding ERB postprocessor to all assets" do
-    @env.engines.post_processors.push(Tilt::ERBTemplate)
-    assert_equal "var Interpolation = 2;\n", @env["interpolation.js"].to_s
   end
 end
 
@@ -367,7 +390,46 @@ class TestEnvironmentIndex < Sprockets::TestCase
   end
 
   test "does not allow static root to be changed" do
-    assert !@env.respond_to?(:static_root=)
+    assert_raises TypeError do
+      @env.static_root = fixture_path('public')
+    end
+  end
+
+  test "does not allow new mime types to be added" do
+    assert_raises TypeError do
+      @env.register_mime_type "application/javascript", ".jst"
+    end
+  end
+
+  test "change in environment mime types does not affect index" do
+    env = Sprockets::Environment.new(".")
+    env.register_mime_type "application/javascript", ".jst"
+    index = env.index
+
+    assert_equal "application/javascript", index.mime_types("jst")
+    env.register_mime_type nil, ".jst"
+    assert_equal "application/javascript", index.mime_types("jst")
+  end
+
+  test "does not allow new filters to be added" do
+    assert_raises TypeError do
+      @env.register_filter 'text/css', WhitespaceCompressor
+    end
+  end
+
+  test "does not allow filters to be removed" do
+    assert_raises TypeError do
+      @env.unregister_filter 'text/css', WhitespaceCompressor
+    end
+  end
+
+  test "change in environment filters does not affect index" do
+    env = Sprockets::Environment.new(".")
+    index = env.index
+
+    assert !index.filters('text/css').include?(WhitespaceCompressor)
+    env.register_filter 'text/css', WhitespaceCompressor
+    assert !index.filters('text/css').include?(WhitespaceCompressor)
   end
 
   test "change in environment static root does not affect index" do
@@ -381,7 +443,9 @@ class TestEnvironmentIndex < Sprockets::TestCase
   end
 
   test "does not allow css compressor to be changed" do
-    assert !@env.respond_to?(:css_compressor=)
+    assert_raises TypeError do
+      @env.css_compressor = WhitespaceCompressor
+    end
   end
 
   test "change in environment css compressor does not affect index" do
@@ -389,13 +453,15 @@ class TestEnvironmentIndex < Sprockets::TestCase
     env.css_compressor = WhitespaceCompressor
     index = env.index
 
-    assert_equal WhitespaceCompressor, index.css_compressor
+    assert_equal WhitespaceCompressor, index.css_compressor.compressor
     env.css_compressor = nil
-    assert_equal WhitespaceCompressor, index.css_compressor
+    assert_equal WhitespaceCompressor, index.css_compressor.compressor
   end
 
   test "does not allow js compressor to be changed" do
-    assert !@env.respond_to?(:js_compressor=)
+    assert_raises TypeError do
+      @env.js_compressor = WhitespaceCompressor
+    end
   end
 
   test "change in environment js compressor does not affect index" do
@@ -403,9 +469,9 @@ class TestEnvironmentIndex < Sprockets::TestCase
     env.js_compressor = WhitespaceCompressor
     index = env.index
 
-    assert_equal WhitespaceCompressor, index.js_compressor
+    assert_equal WhitespaceCompressor, index.js_compressor.compressor
     env.js_compressor = nil
-    assert_equal WhitespaceCompressor, index.js_compressor
+    assert_equal WhitespaceCompressor, index.js_compressor.compressor
   end
 
   test "change in environment engines does not affect index" do
@@ -415,7 +481,7 @@ class TestEnvironmentIndex < Sprockets::TestCase
     assert_nil env.engines[".foo"]
     assert_nil index.engines[".foo"]
 
-    env.engines.register ".foo", Tilt::StringTemplate
+    env.register_engine ".foo", Tilt::StringTemplate
 
     assert env.engines[".foo"]
     assert_nil index.engines[".foo"]

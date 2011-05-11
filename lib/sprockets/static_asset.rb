@@ -1,5 +1,4 @@
-require 'sprockets/engine_pathname'
-require 'sprockets/utils'
+require 'sprockets/asset_pathname'
 require 'digest/md5'
 require 'time'
 
@@ -7,28 +6,19 @@ module Sprockets
   class StaticAsset
     attr_reader :pathname, :content_type, :mtime, :length, :digest
 
-    def initialize(environment, pathname)
+    def initialize(environment, pathname, digest = nil)
       @pathname = Pathname.new(pathname)
 
-      engine_pathname = EnginePathname.new(pathname, environment.engines)
-      @content_type   = engine_pathname.content_type
+      asset_pathname = AssetPathname.new(pathname, environment)
+      @content_type  = asset_pathname.content_type
 
       @mtime  = @pathname.mtime
       @length = @pathname.size
-
-      if digest = Utils.path_fingerprint(@pathname)
-        @digest = digest
-      else
-        @digest = Digest::MD5.hexdigest(pathname.read)
-      end
+      @digest = digest || Digest::MD5.hexdigest(pathname.read)
     end
 
     def stale?
-      if Utils.path_fingerprint(pathname)
-        false
-      else
-        mtime < pathname.mtime
-      end
+      mtime < pathname.mtime
     rescue Errno::ENOENT
       true
     end

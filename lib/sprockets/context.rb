@@ -1,4 +1,4 @@
-require 'sprockets/engine_pathname'
+require 'sprockets/asset_pathname'
 require 'sprockets/errors'
 require 'pathname'
 
@@ -8,17 +8,19 @@ require 'pathname'
 # TODO Fill in with better explanation
 module Sprockets
   class Context
-    attr_reader :sprockets_environment
-    attr_reader :pathname
+    attr_reader :concatenation, :pathname
 
-    def initialize(environment, concatenation, pathname)
-      @_sprockets_concatenation = concatenation
-      @sprockets_environment    = environment
-      @pathname                 = pathname
+    def initialize(concatenation, pathname)
+      @concatenation = concatenation
+      @pathname      = pathname
+    end
+
+    def environment
+      concatenation.environment
     end
 
     def root_path
-      sprockets_environment.paths.detect { |path| pathname.to_s[path] }
+      environment.paths.detect { |path| pathname.to_s[path] }
     end
 
     def logical_path
@@ -28,57 +30,56 @@ module Sprockets
     end
 
     def content_type
-      EnginePathname.new(pathname, sprockets_environment.engines).content_type
+      AssetPathname.new(pathname, environment).content_type
     end
 
-    def sprockets_resolve(path, &block)
-      sprockets_environment.resolve(path, :base_path => pathname.dirname, &block)
-    end
-
-    def sprockets_depend(path)
-      @_sprockets_concatenation.depend(_expand_path(path))
-    end
-
-    def sprockets_requirable?(filename)
-      pathname = Pathname.new(filename)
-      pathname.file? && @_sprockets_concatenation.requirable?(pathname)
-    end
-
-    def sprockets_require(path)
-      pathname        = Pathname.new(path)
-      engine_pathname = EnginePathname.new(pathname, sprockets_environment.engines)
-
-      if engine_pathname.format_extension
-        if self.content_type != engine_pathname.content_type
-          raise ContentTypeMismatch, "#{path} is " +
-            "'#{engine_pathname.format_extension}', not '#{EnginePathname.new(self.pathname, sprockets_environment.engines).format_extension}'"
-        end
-      end
+    def resolve(path, options = {}, &block)
+      pathname       = Pathname.new(path)
+      asset_pathname = AssetPathname.new(pathname, environment)
 
       if pathname.absolute?
-        @_sprockets_concatenation.require(pathname)
-      else
-        sprockets_resolve(path) do |candidate|
-          engine_pathname = EnginePathname.new(candidate, sprockets_environment.engines)
+        pathname
 
-          if self.content_type == engine_pathname.content_type
-            @_sprockets_concatenation.require(candidate)
-            return
+      elsif content_type = options[:content_type]
+        content_type = self.content_type if content_type == :self
+
+        if asset_pathname.format_extension
+          if content_type != asset_pathname.content_type
+            raise ContentTypeMismatch, "#{path} is " +
+              "'#{asset_pathname.content_type}', not '#{content_type}'"
+          end
+        end
+
+        resolve(path) do |candidate|
+          if self.content_type == AssetPathname.new(candidate, environment).content_type
+            return candidate
           end
         end
 
         raise FileNotFound, "couldn't find file '#{path}'"
+      else
+        environment.resolve(path, :base_path => self.pathname.dirname, &block)
       end
     end
 
-    def sprockets_process(path)
-      @_sprockets_concatenation.process(_expand_path(path))
+    def depend_on(path)
+      concatenation.depend_on(resolve(path))
     end
 
-    private
-      def _expand_path(path)
-        pathname = Pathname.new(path)
-        pathname.absolute? ? pathname : resolve(pathname)
+    def evaluate(filename, options = {})
+      pathname       = resolve(filename)
+      asset_pathname = AssetPathname.new(pathname, environment)
+      extension      = asset_pathname.format_extension ||
+                         asset_pathname.engine_format_extension
+
+      data     = options[:data] || pathname.read
+      engines  = options[:engines] || environment.formats(extension) +
+                          asset_pathname.engines.reverse
+
+      engines.inject(data) do |result, engine|
+        template = engine.new(pathname.to_s) { result }
+        template.render(self, {})
       end
+    end
   end
 end

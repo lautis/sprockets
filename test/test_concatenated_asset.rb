@@ -92,6 +92,10 @@ class ConcatenatedAssetTest < Sprockets::TestCase
     end
   end
 
+  test "require_self inserts the current file's body at the specified point" do
+    assert_equal "/* b.css */\n\nb { display: none }\n/*\n */\n\n.one {}\n\n\nbody {}\n.project {}\n.two {}\n", asset("require_self.css").to_s
+  end
+
   test "__FILE__ is properly set in templates" do
     assert_equal %(var filename = "#{resolve("filename.js")}";\n),
       asset("filename.js").to_s
@@ -106,14 +110,12 @@ class ConcatenatedAssetTest < Sprockets::TestCase
 
   test "asset inherits the format extension and content type of the original file" do
     asset = asset("project.js")
-    assert_equal ".js", asset.format_extension
     assert_equal "application/javascript", asset.content_type
   end
 
   if Tilt::CoffeeScriptTemplate.respond_to?(:default_mime_type)
     test "asset falls back to engines default mime type" do
       asset = asset("default_mime_type.js")
-      assert_equal ".js", asset.format_extension
       assert_equal "application/javascript", asset.content_type
     end
   end

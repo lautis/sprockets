@@ -2,24 +2,23 @@ require 'tilt'
 
 module Sprockets
   class Compressor < Tilt::Template
+    def self.compressor
+      @compressor
+    end
+
+    def self.name
+      'Sprockets::Compressor'
+    end
+
+    def self.to_s
+      "#{name} #{compressor.inspect}"
+    end
+
     def prepare
     end
 
     def evaluate(context, locals, &block)
-      environment = context.sprockets_environment
-
-      case context.content_type
-      when 'application/javascript'
-        if environment.js_compressor
-          return environment.js_compressor.compress(data)
-        end
-      when 'text/css'
-        if environment.css_compressor
-          return environment.css_compressor.compress(data)
-        end
-      end
-
-      data
+      self.class.compressor.compress(data)
     end
   end
 end

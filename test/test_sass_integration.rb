@@ -4,7 +4,7 @@ class TestSassIntegration < Sprockets::TestCase
   def setup
     @env = Sprockets::Environment.new
     @env.paths << fixture_path('sass')
-    @env.engines.register :scss, Sprockets::ScssTemplate
+    @env.register_engine :scss, Sprockets::ScssTemplate
   end
 
   test "sass imports" do
