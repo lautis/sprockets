@@ -1,5 +1,6 @@
 require 'sprockets_test'
 require 'rack/mock'
+require 'execjs'
 
 module EnvironmentTests
   def self.test(name, &block)
@@ -50,17 +51,21 @@ module EnvironmentTests
     end
   end
 
+  test "ejs templates" do
+    asset = @env["hello.jst"]
+    assert_equal "window.JST || window.JST = {};\nwindow.JST[\"hello\"] = function(obj){var __p=[],print=function(){__p.push.apply(__p,arguments);};with(obj||{}){__p.push('hello: ', name ,'\\n');}return __p.join('');};\n", asset.to_s
+  end
+
   test "lookup mime type" do
     assert_equal "application/javascript", @env.mime_types(".js")
-    assert_equal "application/javascript", @env.mime_types("js")
-    assert_equal "text/css", @env.mime_types(:css)
+    assert_equal "text/css", @env.mime_types(".css")
     assert_equal nil, @env.mime_types("foo")
     assert_equal nil, @env.mime_types("foo")
   end
 
   test "lookup filters" do
     assert_equal [], @env.filters('application/javascript')
-    assert_equal [], @env.filters('text/css')
+    assert_equal [Sprockets::CharsetNormalizer], @env.filters('text/css')
   end
 
   test "resolve in environment" do
@@ -80,12 +85,12 @@ module EnvironmentTests
     end
   end
 
-  test "find concatenated asset in environment" do
+  test "find bundled asset in environment" do
     assert_equal "var Gallery = {};\n", @env["gallery.js"].to_s
   end
 
-  test "find concatenated asset with leading slash in environment" do
-    assert_equal "var Gallery = {};\n", @env["/gallery.js"].to_s
+  test "find bundled asset with absolute path environment" do
+    assert_equal "var Gallery = {};\n", @env[fixture_path("default/gallery.js")].to_s
   end
 
   test "find static asset in environment" do
@@ -93,7 +98,7 @@ module EnvironmentTests
   end
 
   test "find static asset with leading slash in environment" do
-    assert_equal "Hello world\n", @env["/hello.txt"].to_s
+    assert_equal "Hello world\n", @env[fixture_path("default/hello.txt")].to_s
   end
 
   test "find compiled asset in static root" do
@@ -103,7 +108,7 @@ module EnvironmentTests
 
   test "find compiled asset with leading slash in static root" do
     assert_equal "(function() {\n  application.boot();\n})();\n",
-      @env["/compiled.js"].to_s
+      @env[fixture_path("public/compiled-digest-0aa2105d29558f3eb790d411d7d8fb66.js")].to_s
   end
 
   test "find compiled asset in static root is StaticAsset" do
@@ -153,6 +158,15 @@ module EnvironmentTests
     assert_raises Sprockets::FileNotFound do
       @env["missing_require.js"]
     end
+  end
+
+  test "asset logical path for absolute path" do
+    assert_equal "gallery.js",
+      @env[fixture_path("default/gallery.js")].logical_path
+    assert_equal "application.js",
+      @env[fixture_path("default/application.js.coffee")].logical_path
+    assert_equal "mobile/a.js",
+      @env[fixture_path("default/mobile/a.js")].logical_path
   end
 
   test "lookup asset digest" do
@@ -227,6 +241,11 @@ module EnvironmentTests
       FileUtils.rm_rf(dirname)
     end
   end
+
+  test "CoffeeScript files are compiled in a closure" do
+    script = @env["coffee"].to_s
+    assert_equal "undefined", ExecJS.exec(script)
+  end
 end
 
 class WhitespaceCompressor
@@ -250,12 +269,6 @@ class TestEnvironment < Sprockets::TestCase
     @env = new_environment
   end
 
-  test "register mime type" do
-    assert !@env.mime_types("jst")
-    @env.register_mime_type("application/javascript", "jst")
-    assert_equal "application/javascript", @env.mime_types("jst")
-  end
-
   test "register filter" do
     assert !@env.filters('text/css').include?(WhitespaceCompressor)
     @env.register_filter 'text/css', WhitespaceCompressor
@@ -274,10 +287,24 @@ class TestEnvironment < Sprockets::TestCase
     assert_equal ".gallery{color:red;}", @env["gallery.css"].to_s
   end
 
+  test "setting css compressor to nil clears current compressor" do
+    @env.css_compressor = WhitespaceCompressor
+    assert_equal WhitespaceCompressor, @env.css_compressor.compressor
+    @env.css_compressor = nil
+    assert_nil @env.css_compressor
+  end
+
   test "changing js compressor expires old assets" do
     assert_equal "var Gallery = {};\n", @env["gallery.js"].to_s
     @env.js_compressor = WhitespaceCompressor
     assert_equal "varGallery={};", @env["gallery.js"].to_s
+  end
+
+  test "setting js compressor to nil clears current compressor" do
+    @env.js_compressor = WhitespaceCompressor
+    assert_equal WhitespaceCompressor, @env.js_compressor.compressor
+    @env.js_compressor = nil
+    assert_nil @env.js_compressor
   end
 
   test "changing paths expires old assets" do
@@ -286,7 +313,7 @@ class TestEnvironment < Sprockets::TestCase
     assert_nil @env["gallery.css"]
   end
 
-  test "concatenated asset is stale if its mtime is updated or deleted" do
+  test "bundled asset is stale if its mtime is updated or deleted" do
     filename = File.join(fixture_path("default"), "tmp.js")
 
     begin
@@ -393,22 +420,6 @@ class TestEnvironmentIndex < Sprockets::TestCase
     assert_raises TypeError do
       @env.static_root = fixture_path('public')
     end
-  end
-
-  test "does not allow new mime types to be added" do
-    assert_raises TypeError do
-      @env.register_mime_type "application/javascript", ".jst"
-    end
-  end
-
-  test "change in environment mime types does not affect index" do
-    env = Sprockets::Environment.new(".")
-    env.register_mime_type "application/javascript", ".jst"
-    index = env.index
-
-    assert_equal "application/javascript", index.mime_types("jst")
-    env.register_mime_type nil, ".jst"
-    assert_equal "application/javascript", index.mime_types("jst")
   end
 
   test "does not allow new filters to be added" do

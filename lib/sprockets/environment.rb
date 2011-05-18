@@ -23,7 +23,6 @@ module Sprockets
 
       @static_root = nil
 
-      @mime_types = {}
       @engines = {}
       @formats = Hash.new { |h, k| h[k] = [] }
       @filters = Hash.new { |h, k| h[k] = [] }
@@ -31,12 +30,17 @@ module Sprockets
       register_format '.css', DirectiveProcessor
       register_format '.js', DirectiveProcessor
 
+      register_engine '.jst', JstProcessor
+      register_engine '.ejs', EjsTemplate
+
       register_engine '.str',    Tilt::StringTemplate
       register_engine '.erb',    Tilt::ERBTemplate
       register_engine '.sass',   Tilt::SassTemplate
       register_engine '.scss',   Tilt::ScssTemplate
       register_engine '.less',   Tilt::LessTemplate
-      register_engine '.coffee', Tilt::CoffeeScriptTemplate
+      register_engine '.coffee', CoffeeScriptTemplate
+
+      register_filter 'text/css', CharsetNormalizer
 
       expire_index!
     end
@@ -78,13 +82,14 @@ module Sprockets
       index.resolve(logical_path, options, &block)
     end
 
-    def find_asset(logical_path)
+    def find_asset(logical_path, options = {})
       logical_path = Pathname.new(logical_path)
 
       if asset = find_fresh_asset_from_cache(logical_path)
         asset
-      elsif asset = index.find_asset(logical_path)
-        @cache[logical_path.to_s] = asset
+      elsif asset = index.find_asset(logical_path, :_environment => self)
+        asset.to_a.each { |a| @cache[a.logical_path.to_s] = a }
+        asset
       end
     end
     alias_method :[], :find_asset

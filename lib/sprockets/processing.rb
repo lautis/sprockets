@@ -6,16 +6,10 @@ module Sprockets
   module Processing
     def mime_types(ext = nil)
       if ext.nil?
-        Rack::Mime::MIME_TYPES.merge(@mime_types)
+        Rack::Mime::MIME_TYPES.dup
       else
-        ext = normalize_extension(ext)
-        @mime_types[ext] || Rack::Mime::MIME_TYPES[ext]
+        Rack::Mime::MIME_TYPES[ext]
       end
-    end
-
-    def register_mime_type(mime_type, ext)
-      expire_index!
-      @mime_types[normalize_extension(ext)] = mime_type
     end
 
     def formats(ext = nil)
@@ -94,11 +88,13 @@ module Sprockets
         unregister_filter 'text/css', old_compressor
       end
 
-      klass = Class.new(Compressor) do
-        @compressor = compressor
-      end
+      if compressor
+        klass = Class.new(Compressor) do
+          @compressor = compressor
+        end
 
-      register_filter 'text/css', klass
+        register_filter 'text/css', klass
+      end
     end
 
     def js_compressor
@@ -115,11 +111,13 @@ module Sprockets
         unregister_filter 'application/javascript', old_compressor
       end
 
-      klass = Class.new(Compressor) do
-        @compressor = compressor
-      end
+      if compressor
+        klass = Class.new(Compressor) do
+          @compressor = compressor
+        end
 
-      register_filter 'application/javascript', klass
+        register_filter 'application/javascript', klass
+      end
     end
 
     private

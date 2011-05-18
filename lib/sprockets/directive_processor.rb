@@ -44,21 +44,24 @@ module Sprockets
 
       @directive_parser   = Parser.new(data)
       @included_pathnames = []
-      @has_written_body   = false
       @compat             = false
     end
 
     # Implemented for Tilt#render.
     #
     # `context` is a `Context` instance with methods that allow you to
-    # access the environment and append to the concatenation. See
-    # `Context` for the complete API.
+    # access the environment and append to the bundle. See `Context`
+    # for the complete API.
     def evaluate(context, locals, &block)
-      @context       = context
-      @concatenation = context.concatenation
+      @context = context
+
+      @result = ""
+      @has_written_body = false
 
       process_directives
       process_source
+
+      @result
     end
 
     def processed_header
@@ -160,7 +163,7 @@ module Sprockets
       end
 
       attr_reader :included_pathnames
-      attr_reader :context, :concatenation
+      attr_reader :context
 
       # Gathers comment directives in the source and processes them.
       # Any directive method matching `process_*_directive` will
@@ -191,25 +194,21 @@ module Sprockets
       end
 
       def process_source
-        result = ""
-
         unless @has_written_body || processed_header.empty?
-          result << processed_header << "\n"
+          @result << processed_header << "\n"
         end
 
         included_pathnames.each do |pathname|
-          result << context.evaluate(pathname)
+          @result << context.evaluate(pathname)
         end
 
         unless @has_written_body
-          result << processed_body
+          @result << processed_body
         end
 
         if compat? && constants.any?
-          result.gsub!(/<%=(.*?)%>/) { constants[$1.strip] }
+          @result.gsub!(/<%=(.*?)%>/) { constants[$1.strip] }
         end
-
-        result
       end
 
       # The `require` directive functions similar to Ruby's own `require`.
@@ -239,7 +238,7 @@ module Sprockets
           end
         end
 
-        require(path)
+        context.require_asset(path)
       end
 
       # `require_self` causes the body of the current file to be
@@ -254,11 +253,14 @@ module Sprockets
       #      */
       #
       def process_require_self_directive
-        unless @has_written_body
-          concatenation << context.evaluate(pathname, :data => process_source)
-          included_pathnames.clear
-          @has_written_body = true
+        if @has_written_body
+          raise ArgumentError, "require_self can only be called once per source file"
         end
+
+        context.require_asset(pathname)
+        process_source
+        included_pathnames.clear
+        @has_written_body = true
       end
 
       # The `include` directive works similar to `require` but
@@ -283,8 +285,8 @@ module Sprockets
           context.depend_on(root)
 
           Dir["#{root}/*"].sort.each do |filename|
-            if concatenation.can_require?(filename)
-              require(filename)
+            if context.asset_requirable?(filename)
+              context.require_asset(filename)
             end
           end
         else
@@ -306,8 +308,8 @@ module Sprockets
           Dir["#{root}/**/*"].sort.each do |filename|
             if File.directory?(filename)
               context.depend_on(filename)
-            elsif concatenation.can_require?(filename)
-              require(filename)
+            elsif context.asset_requirable?(filename)
+              context.require_asset(filename)
             end
           end
         else
@@ -356,7 +358,7 @@ module Sprockets
           path = File.join(context.root_path, "constants.yml")
           File.exist?(path) ? YAML.load_file(path) : {}
         else
-        {}
+          {}
         end
       end
 
@@ -367,10 +369,6 @@ module Sprockets
       end
 
     private
-      def require(path)
-        concatenation.require(context.resolve(path, :content_type => :self))
-      end
-
       def relative?(path)
         path =~ /^\.($|\.?\/)/
       end

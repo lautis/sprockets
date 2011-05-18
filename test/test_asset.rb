@@ -1,9 +1,109 @@
 require "sprockets_test"
 
-class ConcatenatedAssetTest < Sprockets::TestCase
+module AssetTests
+  def self.test(name, &block)
+    define_method("test #{name.inspect}", &block)
+  end
+
+  test "pathname is a Pathname that exists" do
+    assert_kind_of Pathname, @asset.pathname
+    assert @asset.pathname.exist?
+  end
+
+  test "logical path can find itself" do
+    assert_equal @asset, @env[@asset.logical_path]
+  end
+
+  test "content type" do
+    assert_equal "application/javascript", @asset.content_type
+  end
+
+  test "mtime" do
+    assert @asset.mtime
+  end
+
+  test "length" do
+    assert_equal 157, @asset.length
+  end
+
+  test "digest" do
+    assert_equal "a64bb1a34523baef725ad44d492269e1", @asset.digest
+  end
+
+  test "each" do
+    body = ""
+    @asset.each { |part| body << part }
+    assert_equal "var Project = {\n  find: function(id) {\n  }\n};\nvar Users = {\n  find: function(id) {\n  }\n};\n\ndocument.on('dom:loaded', function() {\n  $('search').focus();\n});\n", body
+  end
+
+  test "stale?" do
+    assert !@asset.stale?
+  end
+
+  test "to_s" do
+    assert_equal "var Project = {\n  find: function(id) {\n  }\n};\nvar Users = {\n  find: function(id) {\n  }\n};\n\ndocument.on('dom:loaded', function() {\n  $('search').focus();\n});\n", @asset.to_s
+  end
+
+  test "dependencies are an Array" do
+    assert_kind_of Array, @asset.dependencies
+  end
+
+  test "splat asset" do
+    assert_kind_of Array, @asset.to_a
+  end
+
+  test "body is a String" do
+    assert_kind_of String, @asset.body
+  end
+end
+
+class StaticAssetTest < Sprockets::TestCase
+  def setup
+    @env = Sprockets::Environment.new
+    @env.static_root = fixture_path('public')
+
+    @asset = @env['compiled-application.js']
+  end
+
+  include AssetTests
+
+  test "class" do
+    assert_kind_of Sprockets::StaticAsset, @asset
+  end
+
+  test "splat" do
+    assert_equal [@asset], @asset.to_a
+  end
+
+  test "dependencies" do
+    assert_equal [], @asset.dependencies
+  end
+
+  test "dependencies?" do
+    assert !@asset.dependencies?
+  end
+
+  test "to path" do
+    assert_equal fixture_path('public/compiled-application.js'), @asset.to_path
+  end
+
+  test "body is entire contents" do
+    assert_equal @asset.to_s, @asset.body
+  end
+end
+
+class BundledAssetTest < Sprockets::TestCase
   def setup
     @env = Sprockets::Environment.new
     @env.paths << fixture_path('asset')
+
+    @asset = @env['application.js']
+  end
+
+  include AssetTests
+
+  test "class" do
+    assert_kind_of Sprockets::BundledAsset, @asset
   end
 
   test "requiring the same file multiple times has no effect" do
@@ -16,8 +116,32 @@ class ConcatenatedAssetTest < Sprockets::TestCase
     end
   end
 
-  test "concating joins files with blank line" do
-    assert_equal "var Project = {\n  find: function(id) {\n  }\n};\nvar Users = {\n  find: function(id) {\n  }\n};\n\ndocument.on('dom:loaded', function() {\n  $('search').focus();\n});\n", asset("application.js").to_s
+  test "splatted asset includes itself" do
+    assert_equal [resolve("project.js")], asset("project.js").to_a.map(&:pathname)
+  end
+
+  test "asset includes self as dependency" do
+    assert_equal [], asset("project.js").dependencies.map(&:pathname)
+  end
+
+  test "asset with child dependencies" do
+    assert_equal [resolve("project.js"), resolve("users.js")],
+      asset("application.js").dependencies.map(&:pathname)
+  end
+
+  test "splatted asset with child dependencies" do
+    assert_equal [resolve("project.js"), resolve("users.js"), resolve("application.js")],
+      asset("application.js").to_a.map(&:pathname)
+  end
+
+  test "bundled asset body is just its own contents" do
+    assert_equal "\ndocument.on('dom:loaded', function() {\n  $('search').focus();\n});\n",
+      asset("application.js").body
+  end
+
+  test "bundling joins files with blank line" do
+    assert_equal "var Project = {\n  find: function(id) {\n  }\n};\nvar Users = {\n  find: function(id) {\n  }\n};\n\ndocument.on('dom:loaded', function() {\n  $('search').focus();\n});\n",
+      asset("application.js").to_s
   end
 
   test "dependencies appear in the source before files that required them" do
@@ -93,7 +217,25 @@ class ConcatenatedAssetTest < Sprockets::TestCase
   end
 
   test "require_self inserts the current file's body at the specified point" do
-    assert_equal "/* b.css */\n\nb { display: none }\n/*\n */\n\n.one {}\n\n\nbody {}\n.project {}\n.two {}\n", asset("require_self.css").to_s
+    assert_equal "/* b.css */\n\nb { display: none }\n/*\n */\n.one {}\n\n\nbody {}\n.two {}\n.project {}\n", asset("require_self.css").to_s
+  end
+
+  test "multiple require_self directives raises and error" do
+    assert_raise(Sprockets::ArgumentError) do
+      asset("require_self_twice.css")
+    end
+  end
+
+  test "circular require raises an error" do
+    assert_raise(Sprockets::CircularDependencyError) do
+      asset("circle/a.js")
+    end
+    assert_raise(Sprockets::CircularDependencyError) do
+      asset("circle/b.js")
+    end
+    assert_raise(Sprockets::CircularDependencyError) do
+      asset("circle/c.js")
+    end
   end
 
   test "__FILE__ is properly set in templates" do
@@ -201,8 +343,12 @@ class ConcatenatedAssetTest < Sprockets::TestCase
       asset("constants.js").to_s
   end
 
+  test "multiple charset defintions are stripped from css bundle" do
+    assert_equal "@charset \"UTF-8\";\n.foo {}\n\n.bar {}\n", asset("charset.css").to_s
+  end
+
   def asset(logical_path)
-    Sprockets::ConcatenatedAsset.new(@env.index, resolve(logical_path))
+    @env.index[logical_path]
   end
 
   def resolve(logical_path)
